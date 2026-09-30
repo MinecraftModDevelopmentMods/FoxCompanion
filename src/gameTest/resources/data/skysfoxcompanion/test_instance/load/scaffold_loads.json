@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "environment": "minecraft:default",
+  "function": "skysfoxcompanion:load/scaffold_loads",
+  "max_ticks": 100,
+  "structure": "minecraft:empty"
+}

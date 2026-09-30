@@ -1,0 +1,92 @@
+name: Fox Companion 26.3 NeoForge CI
+
+on:
+  push:
+    branches:
+      - master-26.3-neo
+  pull_request:
+    branches:
+      - master-26.3-neo
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foxcompanion-26.3-neo-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cold-bootstrap:
+    name: Cold NeoForge bootstrap
+    runs-on: ubuntu-latest
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/foxcompanion-gradle-cold
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Temurin Java 25
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25.0.3+9.0.LTS'
+
+      - name: Cold build and audit
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean --no-daemon --stacktrace
+          ./gradlew check build javadoc verifyReleaseArtifacts writeReleaseChecksums \
+            verifyEclipseProductionClasspath --refresh-dependencies --no-daemon --stacktrace
+
+  build:
+    name: Build, test, and audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Temurin Java 25
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25.0.3+9.0.LTS'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+
+      - name: Build, test, and audit release artifacts
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean --no-daemon --stacktrace
+          ./gradlew check build javadoc verifyReleaseArtifacts writeReleaseChecksums \
+            verifyEclipseProductionClasspath --no-daemon --stacktrace
+
+      - name: Run the load GameTest
+        shell: bash
+        run: |
+          ./gradlew runGameTestServer \
+            -PfoxCompanionGameTestRunDirectory=build/game-test-run \
+            --no-daemon --stacktrace
+
+      - name: Upload audited candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: FoxCompanion-26.3-neoforge-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            build/libs/FoxCompanion-0.1.0.2603002.jar
+            build/libs/FoxCompanion-0.1.0.2603002-sources.jar
+            build/libs/FoxCompanion-0.1.0.2603002-javadoc.jar
+            build/release/SHA256SUMS
+
+      - name: Upload GameTest diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: FoxCompanion-gametest-diagnostics-${{ github.sha }}
+          if-no-files-found: ignore
+          path: |
+            build/game-test-run/logs/
+            build/reports/tests/

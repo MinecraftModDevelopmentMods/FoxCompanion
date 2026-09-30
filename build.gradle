@@ -1,0 +1,462 @@
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.util.jar.Manifest
+import java.util.zip.ZipFile
+
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.neoforged.gradle.userdev' version '7.1.39'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = 'FoxCompanion'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+        vendor = JvmVendorSpec.ADOPTIUM
+    }
+    withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(25)
+        vendor = JvmVendorSpec.ADOPTIUM
+    }
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(Javadoc).configureEach {
+    failOnError = true
+    options.encoding = 'UTF-8'
+    options.addStringOption('Xdoclint:none', '-quiet')
+    options.addBooleanOption('-no-fonts', true)
+    options.addBooleanOption('notimestamp', true)
+}
+
+def java25Launcher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(25)
+    vendor = JvmVendorSpec.ADOPTIUM
+}
+
+tasks.register('verifyJava25Toolchain') {
+    group = 'verification'
+    description = 'Verifies the pinned Temurin Java 25 production toolchain.'
+    doLast {
+        def metadata = java25Launcher.get().metadata
+        String runtimeVersion = metadata.javaRuntimeVersion
+        if (project.java_toolchain_version != '25.0.3+9'
+                || metadata.vendor.toString() != 'Eclipse Temurin'
+                || !(runtimeVersion == '25.0.3+9' || runtimeVersion == '25.0.3+9-LTS')) {
+            throw new GradleException("Expected Temurin ${project.java_toolchain_version}, found "
+                    + "${metadata.vendor} ${runtimeVersion} at ${metadata.installationPath}")
+        }
+    }
+}
+
+sourceSets {
+    gameTest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+        resources.srcDirs = ['src/main/resources', 'src/generated/resources',
+                'src/gameTest/resources']
+    }
+}
+
+configurations {
+    gameTestImplementation.extendsFrom implementation
+    gameTestCompileOnly.extendsFrom compileOnly
+    gameTestRuntimeOnly.extendsFrom runtimeOnly
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+def developmentRunDirectory = providers.gradleProperty('foxCompanionRunDirectory')
+        .getOrElse('run')
+def gameTestRunDirectory = providers.gradleProperty('foxCompanionGameTestRunDirectory')
+        .getOrElse('run-gametest')
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+runs {
+    configureEach {
+        systemProperty 'forge.logging.markers', 'REGISTRIES'
+        systemProperty 'forge.logging.console.level', 'info'
+        workingDirectory project.layout.projectDirectory.dir(developmentRunDirectory)
+    }
+
+    client {
+        modSource project.sourceSets.main
+    }
+
+    server {
+        argument '--nogui'
+        modSource project.sourceSets.main
+    }
+
+    gameTestServer {
+        workingDirectory project.layout.projectDirectory.dir(gameTestRunDirectory)
+        systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
+        modSource project.sourceSets.gameTest
+    }
+
+    clientData {
+        workingDirectory project.layout.projectDirectory.dir('run-data')
+        modSource project.sourceSets.main
+        arguments.addAll '--mod', mod_id, '--all', '--output',
+                file('src/generated/resources/').absolutePath, '--existing',
+                file('src/main/resources/').absolutePath
+    }
+}
+
+repositories {
+}
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+    testImplementation 'junit:junit:4.13.2'
+}
+
+def resourceProperties = [
+        minecraft_version: minecraft_version,
+        minecraft_version_range: minecraft_version_range,
+        neo_version: neo_version,
+        neo_version_range: neo_version_range,
+        mod_id: mod_id,
+        mod_name: mod_name,
+        mod_license: mod_license,
+        mod_version: mod_version,
+        mod_authors: mod_authors,
+        mod_description: mod_description,
+]
+
+tasks.withType(ProcessResources).configureEach {
+    inputs.properties resourceProperties
+    filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) {
+        expand resourceProperties + [project: project]
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    from(['LICENSE', 'LICENSE.spdx', 'NOTICE']) { into 'META-INF' }
+    manifest {
+        attributes([
+                'Specification-Title': mod_id,
+                'Specification-Vendor': mod_authors,
+                'Specification-Version': '1',
+                'Implementation-Title': project.name,
+                'Implementation-Version': project.jar.archiveVersion,
+                'Implementation-Vendor': mod_authors,
+                'Built-On-Java': '25',
+                'Built-On': "${minecraft_version}-${neo_version}"
+        ])
+    }
+}
+
+tasks.named('sourcesJar', Jar).configure {
+    from(['LICENSE', 'LICENSE.spdx', 'NOTICE']) { into 'META-INF' }
+}
+
+tasks.named('javadocJar', Jar).configure {
+    from(['LICENSE', 'LICENSE.spdx', 'NOTICE']) { into 'META-INF' }
+}
+
+tasks.named('assemble').configure {
+    dependsOn tasks.named('jar'), tasks.named('sourcesJar'), tasks.named('javadocJar')
+}
+
+def releaseFiles = provider {
+    [
+            "${base.archivesName.get()}-${project.version}.jar",
+            "${base.archivesName.get()}-${project.version}-sources.jar",
+            "${base.archivesName.get()}-${project.version}-javadoc.jar"
+    ]
+}
+
+tasks.register('verifyReleaseMetadata') {
+    group = 'verification'
+    doLast {
+        if (project.minecraft_version != '26.3'
+                || project.minecraft_version_range != '[26.3]'
+                || project.neo_version != '26.3.0.23-beta'
+                || project.neo_version_range != '[26.3.0.23-beta,26.4)'
+                || project.loader_name != 'neoforge'
+                || project.loader_code != '2'
+                || project.java_version != '25'
+                || project.java_toolchain_version != '25.0.3+9'
+                || project.gradle_java_version != '25'
+                || project.mod_id != 'skysfoxcompanion'
+                || project.mod_group_id != 'zone.moddev.mc.skysfoxcompanion'
+                || project.mod_version != '0.1.0.2603002') {
+            throw new GradleException('Unexpected Fox Companion 26.3 release metadata')
+        }
+    }
+}
+
+tasks.register('verifyReleaseArtifacts') {
+    group = 'verification'
+    dependsOn tasks.named('assemble'), tasks.named('verifyReleaseMetadata')
+    doLast {
+        File libs = layout.buildDirectory.dir('libs').get().asFile
+        List<String> actual = (libs.listFiles() ?: [] as File[])
+                .findAll { it.name.endsWith('.jar') }
+                .collect { it.name }
+                .sort()
+        List<String> expected = releaseFiles.get().collect { it.toString() }.sort()
+        if (actual != expected) {
+            throw new GradleException("Expected exactly ${expected}, found ${actual}")
+        }
+
+        File mainJar = new File(libs, releaseFiles.get()[0])
+        ZipFile zip = new ZipFile(mainJar)
+        try {
+            Set<String> names = zip.entries().collect { it.name } as Set<String>
+            [
+                    'META-INF/neoforge.mods.toml',
+                    'META-INF/LICENSE',
+                    'META-INF/LICENSE.spdx',
+                    'META-INF/NOTICE',
+                    'pack.mcmeta',
+                    'assets/skysfoxcompanion/lang/en_us.json',
+                    'zone/moddev/mc/skysfoxcompanion/FoxCompanion.class'
+            ].each { required ->
+                if (!names.contains(required)) {
+                    throw new GradleException("Release jar is missing ${required}")
+                }
+            }
+
+            Set<String> forbiddenNames = names.findAll { entry ->
+                String lower = entry.toLowerCase(Locale.ROOT)
+                lower.contains('examplemod') || lower.contains('agent-notes')
+                        || lower.contains('.codex') || lower.contains('.claude')
+                        || lower.contains('/test/') || lower.contains('gametest')
+            }
+            if (!forbiddenNames.isEmpty()) {
+                throw new GradleException("Forbidden release entries: ${forbiddenNames}")
+            }
+
+            zip.entries().findAll { it.name.endsWith('.class') }.each { entry ->
+                byte[] header = new byte[8]
+                zip.getInputStream(entry).withCloseable { input ->
+                    if (input.read(header) != 8) {
+                        throw new GradleException("Cannot inspect ${entry.name}")
+                    }
+                }
+                int major = ((header[6] & 0xff) << 8) | (header[7] & 0xff)
+                if (major != 69) {
+                    throw new GradleException("${entry.name} uses class major ${major}, expected 69")
+                }
+            }
+
+            String metadata = zip.getInputStream(zip.getEntry('META-INF/neoforge.mods.toml'))
+                    .getText(StandardCharsets.UTF_8.name())
+            if (!metadata.contains('modId="skysfoxcompanion"')
+                    || !metadata.contains('version="0.1.0.2603002"')
+                    || !metadata.contains('versionRange="[26.3]"')
+                    || !metadata.contains('versionRange="[26.3.0.23-beta,26.4)"')) {
+                throw new GradleException('Packaged NeoForge metadata is incomplete or targets the wrong version')
+            }
+
+            def manifest = new Manifest(zip.getInputStream(zip.getEntry('META-INF/MANIFEST.MF')))
+                    .mainAttributes
+            if (manifest.getValue('Built-On-Java') != '25') {
+                throw new GradleException('Packaged manifest does not identify Java 25')
+            }
+
+            List<String> forbiddenContent = [
+                    'examplemod', 'agent-notes', '.codex', '.claude', '.cursor',
+                    'johnbraham1978' + '@' + 'outlook.com',
+                    'c:' + ((char) 92) + 'users',
+                    'd:' + ((char) 92)
+            ]
+            zip.entries().each { entry ->
+                if (!entry.directory) {
+                    String content = new String(zip.getInputStream(entry).bytes,
+                            StandardCharsets.ISO_8859_1).toLowerCase(Locale.ROOT)
+                    String match = forbiddenContent.find { content.contains(it) }
+                    if (match != null) {
+                        throw new GradleException(
+                                "Release entry ${entry.name} contains forbidden local context: ${match}")
+                    }
+                }
+            }
+        } finally {
+            zip.close()
+        }
+    }
+}
+
+tasks.register('writeReleaseChecksums') {
+    group = 'verification'
+    dependsOn tasks.named('verifyReleaseArtifacts')
+    def output = layout.buildDirectory.file('release/SHA256SUMS')
+    outputs.file(output)
+    doLast {
+        File libs = layout.buildDirectory.dir('libs').get().asFile
+        File checksumFile = output.get().asFile
+        checksumFile.parentFile.mkdirs()
+        checksumFile.setText(releaseFiles.get().collect { name ->
+            File candidate = new File(libs, name)
+            MessageDigest digest = MessageDigest.getInstance('SHA-256')
+            candidate.withInputStream { input ->
+                byte[] buffer = new byte[8192]
+                for (int read = input.read(buffer); read >= 0; read = input.read(buffer)) {
+                    if (read > 0) digest.update(buffer, 0, read)
+                }
+            }
+            "${digest.digest().encodeHex().toString().toUpperCase()}  ${name}"
+        }.join('\n') + '\n', 'UTF-8')
+    }
+}
+
+publishing {
+    publications {
+        register('mavenJava', MavenPublication) {
+            from components.java
+            artifactId = base.archivesName.get()
+            pom {
+                name = 'Fox Companion'
+                description = project.mod_description
+                url = 'https://github.com/MinecraftModDevelopmentMods/FoxCompanion'
+                licenses {
+                    license {
+                        name = 'GNU Lesser General Public License, Version 2.1 only'
+                        url = 'https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/MinecraftModDevelopmentMods/FoxCompanion.git'
+                    developerConnection = 'scm:git:ssh://git@github.com/MinecraftModDevelopmentMods/FoxCompanion.git'
+                    url = 'https://github.com/MinecraftModDevelopmentMods/FoxCompanion'
+                }
+                developers {
+                    developer {
+                        id = 'SkyBlade1978'
+                        name = 'SkyBlade1978'
+                    }
+                }
+            }
+        }
+    }
+}
+
+tasks.withType(Test).configureEach {
+    workingDir = project.projectDir
+}
+
+def prepareEclipseResources = tasks.register('prepareEclipseResources') {
+    group = 'ide'
+    dependsOn tasks.named('processResources')
+    doLast {
+        project.copy {
+            from(layout.buildDirectory.dir('resources/main'))
+            into(layout.projectDirectory.dir('bin/main'))
+        }
+    }
+}
+
+def configureEclipseBuildship = tasks.register('configureEclipseBuildship') {
+    group = 'ide'
+    doLast {
+        String requestedGradleHome = System.getenv('GRADLE_USER_HOME')
+        File gradleHome = requestedGradleHome == null || requestedGradleHome.trim().isEmpty()
+                ? gradle.gradleUserHomeDir : file(requestedGradleHome)
+        File preferencesFile = file('.settings/org.eclipse.buildship.core.prefs')
+        Properties preferences = new Properties()
+        preferences.setProperty('eclipse.preferences.version', '1')
+        preferences.setProperty('connection.gradle.distribution', 'GRADLE_DISTRIBUTION(WRAPPER)')
+        preferences.setProperty('connection.gradle.user.home', gradleHome.canonicalPath)
+        preferences.setProperty('connection.project.dir', '')
+        preferences.setProperty('gradle.user.home', gradleHome.canonicalPath)
+        preferences.setProperty('java.home', System.getProperty('java.home'))
+        preferences.setProperty('override.workspace.settings', 'true')
+        preferencesFile.parentFile.mkdirs()
+        preferencesFile.withOutputStream {
+            preferences.store(it, 'Generated Buildship configuration for NeoForge development.')
+        }
+    }
+}
+
+eclipse {
+    project {
+        natures 'org.eclipse.buildship.core.gradleprojectnature'
+        buildCommand 'org.eclipse.buildship.core.gradleprojectbuilder'
+    }
+    classpath {
+        downloadSources = true
+        downloadJavadoc = true
+        file.whenMerged { classpath ->
+            classpath.entries.removeAll { entry ->
+                String path = entry.path == null ? '' : entry.path.toLowerCase(Locale.ROOT)
+                (entry instanceof org.gradle.plugins.ide.eclipse.model.SourceFolder
+                        && (path.startsWith('src/test') || path.startsWith('src/gametest')
+                        || ['src/main/resources', 'src/generated/resources'].contains(path)))
+                        || (entry instanceof org.gradle.plugins.ide.eclipse.model.Library
+                        && (path.contains('junit') || path.contains('hamcrest')))
+            }
+            if (!classpath.entries.any { entry -> entry.path == 'build/resources/main' }) {
+                classpath.entries.add(new org.gradle.plugins.ide.eclipse.model.SourceFolder(
+                        'build/resources/main', 'bin/main'))
+            }
+        }
+    }
+    synchronizationTasks 'prepareEclipseResources'
+}
+
+tasks.named('eclipse').configure {
+    dependsOn prepareEclipseResources, configureEclipseBuildship
+}
+
+tasks.register('verifyEclipseProductionClasspath') {
+    group = 'verification'
+    dependsOn tasks.named('eclipse')
+    doLast {
+        File classpathFile = file('.classpath')
+        if (!classpathFile.isFile()) {
+            throw new GradleException('Eclipse .classpath was not generated')
+        }
+        String text = classpathFile.getText('UTF-8').toLowerCase(Locale.ROOT)
+        List<String> forbidden = ['src/test', 'src/gametest', 'junit', 'hamcrest',
+                'meta-inf/mods.toml', 'examplemod']
+        List<String> leaked = forbidden.findAll { text.contains(it) }
+        if (!leaked.isEmpty() || !text.contains('path="build/resources/main"')) {
+            throw new GradleException("Eclipse classpath is not production-only: ${leaked}")
+        }
+        File metadata = file('bin/main/META-INF/neoforge.mods.toml')
+        if (!metadata.isFile()
+                || metadata.getText('UTF-8').contains('${mod_version}')
+                || !metadata.getText('UTF-8').contains('version="0.1.0.2603002"')) {
+            throw new GradleException('Eclipse output contains missing or unexpanded metadata')
+        }
+    }
+}
+
+def prepareGameTestRuntime = tasks.register('prepareGameTestRuntime') {
+    doLast {
+        File properties = file("${gameTestRunDirectory}/server.properties")
+        properties.parentFile.mkdirs()
+        properties.setText('online-mode=false\nserver-port=0\n', 'UTF-8')
+    }
+}
+
+tasks.matching { it.name == 'prepareRunGameTestServer' || it.name == 'runGameTestServer' }
+        .configureEach { dependsOn prepareGameTestRuntime }
+
+tasks.named('check').configure {
+    dependsOn tasks.named('verifyJava25Toolchain')
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}

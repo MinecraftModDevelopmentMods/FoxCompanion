@@ -1,0 +1,81 @@
+# Eclipse
+bin/
+*.launch
+.settings/
+.metadata/
+.classpath
+.project
+.eclipse/
+
+# IntelliJ IDEA
+out/
+*.ipr
+*.iws
+*.iml
+.idea/
+
+# Gradle
+build/
+.gradle/
+.gradle-verify-cache/
+/.gradle-user-home/
+
+# Minecraft and verification output
+eclipse/
+run/
+run-*/
+run-data/
+logs/
+crash-reports/
+test-results/
+test-output/
+test-reports/
+verification-runs/
+evidence/
+release/
+dist/
+repo/
+
+# Local diagnostics, temporary files, and secrets
+*.log
+*.log.*
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.jfr
+*.hprof
+*.dmp
+hs_err_pid*
+replay_pid*
+.env
+.env.*
+!.env.example
+secret.json
+
+# Local developer-only context at any depth. Portable project knowledge belongs
+# in README.md and docs/ so it remains available after cloning.
+AGENT.md
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+agent-notes/
+agent_notes/
+.codex/
+.claude/
+.cursor/
+.vscode/
+.continue/
+.windsurf/
+.roo/
+.kilocode/
+.aider*
+*.code-workspace
+.github/copilot-instructions.md
+.github/instructions/
+*agent-handover*.md
+
+# Upstream MDK example or generated files
+TEMPLATE_LICENSE.txt
+/README.txt

@@ -1,0 +1,21 @@
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.gradle text eol=lf
+*.java text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.mcmeta text eol=lf
+*.patch text eol=lf -diff
+*.properties text eol=lf
+*.txt text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+gradlew text eol=lf
+
+*.jar binary
+*.png binary
+*.zip binary
+src/generated/**/.cache/* text eol=lf
+src/generated/**/*.json text eol=lf
