@@ -43,6 +43,18 @@ tasks.withType(Javadoc).configureEach {
     options.addStringOption('Xdoclint:none', '-quiet')
     options.addBooleanOption('-no-fonts', true)
     options.addBooleanOption('notimestamp', true)
+    doLast {
+        fileTree(destinationDir).matching {
+            include '**/*.css', '**/*.html', '**/*.js', '**/*.json', '**/*.svg',
+                    '**/*.txt', '**/element-list', '**/package-list'
+        }.files.each { generatedFile ->
+            String content = generatedFile.getText('UTF-8')
+            String normalized = content.replace('\r\n', '\n').replace('\r', '\n')
+            if (normalized != content) {
+                generatedFile.setText(normalized, 'UTF-8')
+            }
+        }
+    }
 }
 
 def java25Launcher = javaToolchains.launcherFor {
@@ -292,6 +304,34 @@ tasks.register('verifyReleaseArtifacts') {
             }
         } finally {
             zip.close()
+        }
+
+        File javadocArchive = new File(libs, releaseFiles.get()[2])
+        ZipFile javadocZip = new ZipFile(javadocArchive)
+        try {
+            Set<String> textExtensions = ['css', 'html', 'js', 'json', 'svg', 'txt']
+            Set<String> platformDependentEntries = javadocZip.entries().findAll { entry ->
+                if (entry.directory) {
+                    return false
+                }
+                String extension = entry.name.contains('.')
+                        ? entry.name.substring(entry.name.lastIndexOf('.') + 1)
+                        : ''
+                boolean textEntry = textExtensions.contains(extension)
+                        || entry.name.endsWith('/element-list')
+                        || entry.name.endsWith('/package-list')
+                        || entry.name == 'element-list'
+                        || entry.name == 'package-list'
+                textEntry && javadocZip.getInputStream(entry).bytes.any { value ->
+                    (value & 0xff) == 13
+                }
+            }.collect { it.name } as Set<String>
+            if (!platformDependentEntries.isEmpty()) {
+                throw new GradleException(
+                        "Javadoc jar contains non-reproducible CR line endings: ${platformDependentEntries}")
+            }
+        } finally {
+            javadocZip.close()
         }
     }
 }
